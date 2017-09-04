@@ -1,5 +1,9 @@
 /*
  * Copyright 2005-2014 Freescale Semiconductor, Inc. All Rights Reserved.
+ * (C) Copyright 2016, Radiodetection Limited. All rights reserved.
+ *
+ * Modifications made by Radiodetection Ltd, 2016:
+ *     - read device tree to select a specify a specific IPU.
  */
 
 /*
@@ -37,6 +41,24 @@
 #define ADV7180_VOLTAGE_DIGITAL_CORE         1800000
 #define ADV7180_VOLTAGE_DIGITAL_IO           3300000
 #define ADV7180_VOLTAGE_PLL                  1800000
+
+
+static int adv7180_suppress_pwn = 1;
+module_param(adv7180_suppress_pwn, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+MODULE_PARM_DESC(adv7180_suppress_pwn, "Set to zero to enable powerdown pin");
+
+static int adv7180_ext_clk = 1;
+module_param(adv7180_ext_clk, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+MODULE_PARM_DESC(adv7180_ext_clk, "Set to zero to use internal clock");
+
+static int adv7180_suppress_i2c = 0;
+module_param(adv7180_suppress_i2c, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+MODULE_PARM_DESC(adv7180_suppress_i2c, "Set to non-zero to suppress I2C traffic");
+
+static int adv7180_forced_mode = 0;		// 0x01 NTSC locked, 0x41 PAL locked
+module_param(adv7180_forced_mode, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+MODULE_PARM_DESC(adv7180_forced_mode, "Force Mode - 1 NTSC, 65 PAL");
+
 
 static struct regulator *dvddio_regulator;
 static struct regulator *dvdd_regulator;
@@ -272,6 +294,9 @@ static inline int adv7180_read(u8 reg)
 {
 	int val;
 
+	if (adv7180_suppress_i2c) 
+		return 0;
+
 	val = i2c_smbus_read_byte_data(adv7180_data.sen.i2c_client, reg);
 	if (val < 0) {
 		dev_dbg(&adv7180_data.sen.i2c_client->dev,
@@ -290,6 +315,9 @@ static inline int adv7180_read(u8 reg)
 static int adv7180_write_reg(u8 reg, u8 val)
 {
 	s32 ret;
+
+	if (adv7180_suppress_i2c) 
+		return 0;
 
 	ret = i2c_smbus_write_byte_data(adv7180_data.sen.i2c_client, reg, val);
 	if (ret < 0) {
@@ -321,6 +349,10 @@ static void adv7180_get_std(v4l2_std_id *std)
 	dev_dbg(&adv7180_data.sen.i2c_client->dev, "In adv7180_get_std\n");
 
 	status_1 = adv7180_read(ADV7180_STATUS_1);
+
+	if (adv7180_forced_mode) 
+		status_1 = adv7180_forced_mode;
+
 	locked = status_1 & 0x1;
 	standard = status_1 & 0x70;
 
@@ -582,7 +614,12 @@ static int ioctl_g_ctrl(struct v4l2_int_device *s, struct v4l2_control *vc)
 	case V4L2_CID_BRIGHTNESS:
 		dev_dbg(&adv7180_data.sen.i2c_client->dev,
 			"   V4L2_CID_BRIGHTNESS\n");
+
+	if (adv7180_suppress_i2c) 
+		adv7180_data.sen.brightness = 127;
+	else
 		adv7180_data.sen.brightness = adv7180_read(ADV7180_BRIGHTNESS);
+
 		vc->value = adv7180_data.sen.brightness;
 		break;
 	case V4L2_CID_CONTRAST:
@@ -593,7 +630,12 @@ static int ioctl_g_ctrl(struct v4l2_int_device *s, struct v4l2_control *vc)
 	case V4L2_CID_SATURATION:
 		dev_dbg(&adv7180_data.sen.i2c_client->dev,
 			"   V4L2_CID_SATURATION\n");
+
+	if (adv7180_suppress_i2c) 
+		sat = 127;
+	else
 		sat = adv7180_read(ADV7180_SD_SATURATION_CB);
+
 		adv7180_data.sen.saturation = sat;
 		vc->value = adv7180_data.sen.saturation;
 		break;
@@ -1202,6 +1244,9 @@ static int adv7180_probe(struct i2c_client *client,
 
 	printk(KERN_ERR"DBG sensor data is at %p\n", &adv7180_data);
 
+	if (adv7180_suppress_i2c) 
+		printk(KERN_ERR"suppressing i2c transactions in adv7180\n");
+
 	/* ov5640 pinctrl */
 	pinctrl = devm_pinctrl_get_select_default(dev);
 	if (IS_ERR(pinctrl)) {
@@ -1209,22 +1254,25 @@ static int adv7180_probe(struct i2c_client *client,
 		return PTR_ERR(pinctrl);
 	}
 
-	/* request power down pin */
-	pwn_gpio = of_get_named_gpio(dev->of_node, "pwn-gpios", 0);
-	if (!gpio_is_valid(pwn_gpio)) {
-		dev_err(dev, "no sensor pwdn pin available\n");
-		return -ENODEV;
-	}
-	ret = devm_gpio_request_one(dev, pwn_gpio, GPIOF_OUT_INIT_HIGH,
-					"adv7180_pwdn");
-	if (ret < 0) {
-		dev_err(dev, "no power pin available!\n");
-		return ret;
+	if (!adv7180_suppress_pwn) {
+		/* request power down pin */
+		pwn_gpio = of_get_named_gpio(dev->of_node, "pwn-gpios", 0);
+		if (!gpio_is_valid(pwn_gpio)) {
+			dev_err(dev, "no sensor pwdn pin available\n");
+			return -ENODEV;
+		}
+		ret = devm_gpio_request_one(dev, pwn_gpio, GPIOF_OUT_INIT_HIGH,
+						"adv7180_pwdn");
+		if (ret < 0) {
+			dev_err(dev, "no power pin available!\n");
+			return ret;
+		}
 	}
 
 	adv7180_regulator_enable(dev);
 
-	adv7180_power_down(0);
+	if (!adv7180_suppress_pwn)
+		adv7180_power_down(0);
 
 	msleep(1);
 
@@ -1241,24 +1289,33 @@ static int adv7180_probe(struct i2c_client *client,
 	adv7180_data.sen.pix.priv = 1;  /* 1 is used to indicate TV in */
 	adv7180_data.sen.on = true;
 
-	adv7180_data.sen.sensor_clk = devm_clk_get(dev, "csi_mclk");
-	if (IS_ERR(adv7180_data.sen.sensor_clk)) {
-		dev_err(dev, "get mclk failed\n");
-		return PTR_ERR(adv7180_data.sen.sensor_clk);
+	if (!adv7180_ext_clk) {
+		adv7180_data.sen.sensor_clk = devm_clk_get(dev, "csi_mclk");
+		if (IS_ERR(adv7180_data.sen.sensor_clk)) {
+			dev_err(dev, "get mclk failed\n");
+			return PTR_ERR(adv7180_data.sen.sensor_clk);
+		}
+
+		ret = of_property_read_u32(dev->of_node, "mclk",
+						&adv7180_data.sen.mclk);
+		if (ret) {
+			dev_err(dev, "mclk frequency is invalid\n");
+			return ret;
+		}
+
+		ret = of_property_read_u32(
+			dev->of_node, "mclk_source",
+			(u32 *) &(adv7180_data.sen.mclk_source));
+		if (ret) {
+			dev_err(dev, "mclk_source invalid\n");
+			return ret;
+		}
 	}
 
-	ret = of_property_read_u32(dev->of_node, "mclk",
-					&adv7180_data.sen.mclk);
+	ret = of_property_read_u32(dev->of_node, "ipu_id",
+					&(adv7180_data.sen.ipu_id));
 	if (ret) {
-		dev_err(dev, "mclk frequency is invalid\n");
-		return ret;
-	}
-
-	ret = of_property_read_u32(
-		dev->of_node, "mclk_source",
-		(u32 *) &(adv7180_data.sen.mclk_source));
-	if (ret) {
-		dev_err(dev, "mclk_source invalid\n");
+		dev_err(dev, "ipu_id missing or invalid\n");
 		return ret;
 	}
 
@@ -1269,7 +1326,8 @@ static int adv7180_probe(struct i2c_client *client,
 		return ret;
 	}
 
-	clk_prepare_enable(adv7180_data.sen.sensor_clk);
+	if (!adv7180_ext_clk)
+		clk_prepare_enable(adv7180_data.sen.sensor_clk);
 
 	dev_dbg(&adv7180_data.sen.i2c_client->dev,
 		"%s:adv7180 probe i2c address is 0x%02X\n",
@@ -1300,7 +1358,8 @@ static int adv7180_probe(struct i2c_client *client,
 	adv7180_int_device.priv = &adv7180_data;
 	ret = v4l2_int_device_register(&adv7180_int_device);
 
-	clk_disable_unprepare(adv7180_data.sen.sensor_clk);
+	if (!adv7180_ext_clk)
+		clk_disable_unprepare(adv7180_data.sen.sensor_clk);
 
 	return ret;
 }
@@ -1368,7 +1427,7 @@ static __init int adv7180_init(void)
  */
 static void __exit adv7180_clean(void)
 {
-	dev_dbg(&adv7180_data.sen.i2c_client->dev, "In adv7180_clean\n");
+	pr_debug("In adv7180_clean\n");
 	i2c_del_driver(&adv7180_i2c_driver);
 }
 
@@ -1376,5 +1435,10 @@ module_init(adv7180_init);
 module_exit(adv7180_clean);
 
 MODULE_AUTHOR("Freescale Semiconductor");
-MODULE_DESCRIPTION("Anolog Device ADV7180 video decoder driver");
+MODULE_DESCRIPTION("Analog Device ADV7180 video decoder driver (MODIFIED)");
 MODULE_LICENSE("GPL");
+MODULE_VERSION("0.1");
+
+#ifdef GIT_REVISION
+MODULE_INFO(gitrev,GIT_REVISION);
+#endif

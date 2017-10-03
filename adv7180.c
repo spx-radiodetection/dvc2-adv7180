@@ -42,19 +42,12 @@
 #define ADV7180_VOLTAGE_DIGITAL_IO           3300000
 #define ADV7180_VOLTAGE_PLL                  1800000
 
-
-static int adv7180_suppress_pwn = 1;
-module_param(adv7180_suppress_pwn, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
-MODULE_PARM_DESC(adv7180_suppress_pwn, "Set to zero to enable powerdown pin");
-
-static int adv7180_ext_clk = 1;
-module_param(adv7180_ext_clk, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
-MODULE_PARM_DESC(adv7180_ext_clk, "Set to zero to use internal clock");
-
+/* only for debugging */
 static int adv7180_suppress_i2c = 0;
 module_param(adv7180_suppress_i2c, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 MODULE_PARM_DESC(adv7180_suppress_i2c, "Set to non-zero to suppress I2C traffic");
 
+/* only for debugging */
 static int adv7180_forced_mode = 0;		// 0x01 NTSC locked, 0x41 PAL locked
 module_param(adv7180_forced_mode, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 MODULE_PARM_DESC(adv7180_forced_mode, "Force Mode - 1 NTSC, 65 PAL");
@@ -1259,6 +1252,8 @@ static int adv7180_probe(struct i2c_client *client,
 	int rev_id;
 	int ret = 0;
 	bool cvbs = true;
+	bool adv7180_suppress_pwn = false;
+	bool adv7180_ext_clk = false;
 	u32 cvbs_input = 1;
 	struct pinctrl *pinctrl;
 	struct device *dev = &client->dev;
@@ -1275,17 +1270,16 @@ static int adv7180_probe(struct i2c_client *client,
 		return PTR_ERR(pinctrl);
 	}
 
-	if (!adv7180_suppress_pwn) {
-		/* request power down pin */
-		pwn_gpio = of_get_named_gpio(dev->of_node, "pwn-gpios", 0);
-		if (!gpio_is_valid(pwn_gpio)) {
-			dev_err(dev, "no sensor pwdn pin available\n");
-			return -ENODEV;
-		}
+	/* request power down pin */
+	pwn_gpio = of_get_named_gpio(dev->of_node, "pwn-gpios", 0);
+	if (!gpio_is_valid(pwn_gpio)) {
+		dev_err(dev, "missing pwn-gpios dt property, so not using pwdn pin\n");
+		adv7180_suppress_pwn = true;
+	} else {
 		ret = devm_gpio_request_one(dev, pwn_gpio, GPIOF_OUT_INIT_HIGH,
 						"adv7180_pwdn");
 		if (ret < 0) {
-			dev_err(dev, "no power pin available!\n");
+			dev_err(dev, "adv7180 pwdn power pin not available!\n");
 			return ret;
 		}
 	}
@@ -1310,7 +1304,13 @@ static int adv7180_probe(struct i2c_client *client,
 	adv7180_data.sen.pix.priv = 1;  /* 1 is used to indicate TV in */
 	adv7180_data.sen.on = true;
 
-	if (!adv7180_ext_clk) {
+	ret = of_property_read_u32(
+		dev->of_node, "mclk_source",
+		(u32 *) &(adv7180_data.sen.mclk_source));
+	if (ret) {
+		dev_err(dev, "mclk_source dt property missing assuming external clock for adv7180\n");
+		adv7180_ext_clk = true;
+	} else {
 		adv7180_data.sen.sensor_clk = devm_clk_get(dev, "csi_mclk");
 		if (IS_ERR(adv7180_data.sen.sensor_clk)) {
 			dev_err(dev, "get mclk failed\n");
@@ -1321,14 +1321,6 @@ static int adv7180_probe(struct i2c_client *client,
 						&adv7180_data.sen.mclk);
 		if (ret) {
 			dev_err(dev, "mclk frequency is invalid\n");
-			return ret;
-		}
-
-		ret = of_property_read_u32(
-			dev->of_node, "mclk_source",
-			(u32 *) &(adv7180_data.sen.mclk_source));
-		if (ret) {
-			dev_err(dev, "mclk_source invalid\n");
 			return ret;
 		}
 	}

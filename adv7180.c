@@ -346,8 +346,6 @@ static void adv7180_get_std(v4l2_std_id *std)
 	int status_1, standard, idx;
 	bool locked;
 
-	dev_dbg(&adv7180_data.sen.i2c_client->dev, "In adv7180_get_std\n");
-
 	status_1 = adv7180_read(ADV7180_STATUS_1);
 
 	if (adv7180_forced_mode) 
@@ -369,6 +367,8 @@ static void adv7180_get_std(v4l2_std_id *std)
 		}
 	}
 	mutex_unlock(&mutex);
+
+	dev_dbg(&adv7180_data.sen.i2c_client->dev, "adv7180_get_std reporting %d\n", idx);
 
 	/* This assumes autodetect which this device uses. */
 	if (*std != adv7180_data.std_id) {
@@ -551,6 +551,13 @@ static int ioctl_g_fmt_cap(struct v4l2_int_device *s, struct v4l2_format *f)
 		pr_debug("   Returning size of %dx%d\n",
 			 sensor->sen.pix.width, sensor->sen.pix.height);
 		f->fmt.pix = sensor->sen.pix;
+		break;
+
+	case V4L2_BUF_TYPE_SENSOR:
+		pr_debug("%s: left=%d, top=%d, %dx%d\n", __func__,
+			sensor->sen.spix.left, sensor->sen.spix.top,
+			sensor->sen.spix.swidth, sensor->sen.spix.sheight);
+		f->fmt.spix = sensor->sen.spix;
 		break;
 
 	case V4L2_BUF_TYPE_PRIVATE: {
@@ -960,14 +967,27 @@ static struct v4l2_int_device adv7180_int_device = {
  *
  *  @return		None.
  */
-static void adv7180_hard_reset(bool cvbs)
+static void adv7180_hard_reset(bool cvbs, u32 cvbs_input)
 {
 	dev_dbg(&adv7180_data.sen.i2c_client->dev,
 		"In adv7180:adv7180_hard_reset\n");
 
 	if (cvbs) {
-		/* Set CVBS input on AIN1 */
-		adv7180_write_reg(ADV7180_INPUT_CTL, 0x00);
+		switch (cvbs_input) {
+		case 2:
+			/* Set CVBS input on AIN2 (RCA) */
+			adv7180_write_reg(ADV7180_INPUT_CTL, 0x03);
+			break;
+		case 3:
+			/* Set CVBS input on AIN3 (ROD) */
+			adv7180_write_reg(ADV7180_INPUT_CTL, 0x04);
+			break;
+		default:
+		case 1:
+			/* Set CVBS input on AIN1 */
+			adv7180_write_reg(ADV7180_INPUT_CTL, 0x00);
+			break;
+		}
 	} else {
 		/*
 		 * Set YPbPr input on AIN1,4,5 and normal
@@ -1238,7 +1258,8 @@ static int adv7180_probe(struct i2c_client *client,
 {
 	int rev_id;
 	int ret = 0;
-	u32 cvbs = true;
+	bool cvbs = true;
+	u32 cvbs_input = 1;
 	struct pinctrl *pinctrl;
 	struct device *dev = &client->dev;
 
@@ -1339,14 +1360,16 @@ static int adv7180_probe(struct i2c_client *client,
 		"%s:Analog Device adv7%2X0 detected!\n", __func__,
 		rev_id);
 
-	ret = of_property_read_u32(dev->of_node, "cvbs", &(cvbs));
-	if (ret) {
-		dev_err(dev, "cvbs setting is not found\n");
+	cvbs = !of_property_read_bool(dev->of_node, "component");
+
+	ret = of_property_read_u32(dev->of_node, "cvbs", &(cvbs_input));
+	if (ret && !cvbs) {
+		dev_err(dev, "neither cvbs nor component found defaulting to cvbs input 1\n");
 		cvbs = true;
 	}
 
 	/*! ADV7180 initialization. */
-	adv7180_hard_reset(cvbs);
+	adv7180_hard_reset(cvbs, cvbs_input);
 
 	pr_debug("   type is %d (expect %d)\n",
 		 adv7180_int_device.type, v4l2_int_type_slave);
@@ -1434,10 +1457,10 @@ static void __exit adv7180_clean(void)
 module_init(adv7180_init);
 module_exit(adv7180_clean);
 
-MODULE_AUTHOR("Freescale Semiconductor");
-MODULE_DESCRIPTION("Analog Device ADV7180 video decoder driver (MODIFIED)");
+MODULE_AUTHOR("Freescale Semiconductor, James Covey-Crump");
+MODULE_DESCRIPTION("Analog Device ADV7180 video decoder driver");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("0.1");
+MODULE_VERSION("0.2");
 
 #ifdef GIT_REVISION
 MODULE_INFO(gitrev,GIT_REVISION);

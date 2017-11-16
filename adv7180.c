@@ -3,7 +3,10 @@
  * (C) Copyright 2016, Radiodetection Limited. All rights reserved.
  *
  * Modifications made by Radiodetection Ltd, 2016:
- *     - read device tree to select a specify a specific IPU.
+ *     - read device tree to select a specify a specific IPU
+ *     - add V4L2_BUF_TYPE_SENSOR to aid supporting NTSC
+ *     - input selection via sysfs or device tree
+ *     - suppression of I2C to support prototyping
  */
 
 /*
@@ -168,6 +171,12 @@ static DEFINE_MUTEX(mutex);
 #define ADV7180_SD_SATURATION_CB       0xe3	/* SD Saturation Cb */
 #define ADV7180_SD_SATURATION_CR       0xe4	/* SD Saturation Cr */
 #define ADV7180_PWR_MNG                0x0f     /* Power Management */
+
+/* values for ADV7180_INPUT_CTL */
+#define ADV7108_CVBS_AIN1          0
+#define ADV7108_CVBS_AIN2          3
+#define ADV7108_CVBS_AIN3          4
+#define ADV7108_YPbPr              9
 
 /* supported controls */
 /* This hasn't been fully implemented yet.
@@ -969,16 +978,16 @@ static void adv7180_hard_reset(bool cvbs, u32 cvbs_input)
 		switch (cvbs_input) {
 		case 2:
 			/* Set CVBS input on AIN2 (RCA) */
-			adv7180_write_reg(ADV7180_INPUT_CTL, 0x03);
+			adv7180_write_reg(ADV7180_INPUT_CTL, ADV7108_CVBS_AIN2);
 			break;
 		case 3:
 			/* Set CVBS input on AIN3 (ROD) */
-			adv7180_write_reg(ADV7180_INPUT_CTL, 0x04);
+			adv7180_write_reg(ADV7180_INPUT_CTL, ADV7108_CVBS_AIN3);
 			break;
 		default:
 		case 1:
 			/* Set CVBS input on AIN1 */
-			adv7180_write_reg(ADV7180_INPUT_CTL, 0x00);
+			adv7180_write_reg(ADV7180_INPUT_CTL, ADV7108_CVBS_AIN1);
 			break;
 		}
 	} else {
@@ -986,7 +995,7 @@ static void adv7180_hard_reset(bool cvbs, u32 cvbs_input)
 		 * Set YPbPr input on AIN1,4,5 and normal
 		 * operations(autodection of all stds).
 		 */
-		adv7180_write_reg(ADV7180_INPUT_CTL, 0x09);
+		adv7180_write_reg(ADV7180_INPUT_CTL, ADV7108_YPbPr);
 	}
 
 	/* Datasheet recommends */
@@ -1230,12 +1239,57 @@ static void adv7180_hard_reset(bool cvbs, u32 cvbs_input)
 	adv7180_write_reg(0xFB, 0x40);
 }
 
-/*! ADV7180 I2C attach function.
- *
- *  @param *adapter	struct i2c_adapter *.
- *
- *  @return		Error code indicating success or failure.
- */
+static ssize_t analog_input_show(struct device *dev,
+			 struct device_attribute *attr,
+			 char *buffer)
+{
+	char *str = "unknown";
+	int input_ctrl = adv7180_read(ADV7180_INPUT_CTL);
+
+	if (input_ctrl == ADV7108_CVBS_AIN1)
+		str = "CVBS1";
+	else if (input_ctrl == ADV7108_CVBS_AIN2)
+		str = "CVBS2";
+	else if (input_ctrl == ADV7108_CVBS_AIN3)
+		str = "CVBS3";
+	else if (input_ctrl == ADV7108_YPbPr)
+		str = "YPbPr";
+
+	return scnprintf(buffer, 20, "%s\n", str);
+}
+
+static ssize_t analog_input_store(struct device *dev,
+			  struct device_attribute *attr,
+			  const char *buffer, size_t count)
+{
+	
+	if (sysfs_streq(buffer, "CVBS1"))
+		adv7180_hard_reset(true, 1);
+	else if (sysfs_streq(buffer, "CVBS2"))
+		adv7180_hard_reset(true, 2);
+	else if (sysfs_streq(buffer, "CVBS3"))
+		adv7180_hard_reset(true, 3);
+	else if (sysfs_streq(buffer, "YPbPr"))
+		adv7180_hard_reset(false, 0);
+	else
+		return -EINVAL;
+
+	return count;
+}
+
+/* Attach the sysfs access methods */
+DEVICE_ATTR_RW(analog_input);		/* analog_input_store() / analog_input_show() */
+
+/* Attribute Descriptor */
+static struct attribute *adv7180_sysfs_attrs[] = {
+	&dev_attr_analog_input.attr,
+	NULL
+};
+
+/* Attribute group */
+static struct attribute_group adv7180_attr_group = {
+	.attrs = adv7180_sysfs_attrs,
+};
 
 /*!
  * ADV7180 I2C probe function.
@@ -1358,6 +1412,13 @@ static int adv7180_probe(struct i2c_client *client,
 	if (ret && !cvbs) {
 		dev_err(dev, "neither cvbs nor component found defaulting to cvbs input 1\n");
 		cvbs = true;
+	}
+
+	/* Create a sysfs node */
+	ret = sysfs_create_group(&dev->kobj, &adv7180_attr_group);
+	if (ret) {
+		dev_err(dev, "Unable create sysfs entry\n");
+		return ret;
 	}
 
 	/*! ADV7180 initialization. */

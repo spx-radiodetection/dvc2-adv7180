@@ -46,12 +46,12 @@
 #define ADV7180_VOLTAGE_PLL                  1800000
 
 /* only for debugging */
-static int adv7180_suppress_i2c = 0;
+static int adv7180_suppress_i2c;
 module_param(adv7180_suppress_i2c, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 MODULE_PARM_DESC(adv7180_suppress_i2c, "Set to non-zero to suppress I2C traffic");
 
 /* only for debugging */
-static int adv7180_forced_mode = 0;		// 0x01 NTSC locked, 0x41 PAL locked
+static int adv7180_forced_mode;		// 0x01 NTSC locked, 0x41 PAL locked
 module_param(adv7180_forced_mode, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 MODULE_PARM_DESC(adv7180_forced_mode, "Force Mode - 1 NTSC, 65 PAL");
 
@@ -296,7 +296,7 @@ static inline int adv7180_read(u8 reg)
 {
 	int val;
 
-	if (adv7180_suppress_i2c) 
+	if (adv7180_suppress_i2c)
 		return 0;
 
 	val = i2c_smbus_read_byte_data(adv7180_data.sen.i2c_client, reg);
@@ -318,7 +318,7 @@ static int adv7180_write_reg(u8 reg, u8 val)
 {
 	s32 ret;
 
-	if (adv7180_suppress_i2c) 
+	if (adv7180_suppress_i2c)
 		return 0;
 
 	ret = i2c_smbus_write_byte_data(adv7180_data.sen.i2c_client, reg, val);
@@ -350,7 +350,7 @@ static void adv7180_get_std(v4l2_std_id *std)
 
 	status_1 = adv7180_read(ADV7180_STATUS_1);
 
-	if (adv7180_forced_mode) 
+	if (adv7180_forced_mode)
 		status_1 = adv7180_forced_mode;
 
 	locked = status_1 & 0x1;
@@ -370,7 +370,8 @@ static void adv7180_get_std(v4l2_std_id *std)
 	}
 	mutex_unlock(&mutex);
 
-	dev_dbg(&adv7180_data.sen.i2c_client->dev, "adv7180_get_std reporting %d\n", idx);
+	dev_dbg(&adv7180_data.sen.i2c_client->dev,
+		"adv7180_get_std reporting %d\n", idx);
 
 	/* This assumes autodetect which this device uses. */
 	if (*std != adv7180_data.std_id) {
@@ -624,7 +625,7 @@ static int ioctl_g_ctrl(struct v4l2_int_device *s, struct v4l2_control *vc)
 		dev_dbg(&adv7180_data.sen.i2c_client->dev,
 			"   V4L2_CID_BRIGHTNESS\n");
 
-	if (adv7180_suppress_i2c) 
+	if (adv7180_suppress_i2c)
 		adv7180_data.sen.brightness = 127;
 	else
 		adv7180_data.sen.brightness = adv7180_read(ADV7180_BRIGHTNESS);
@@ -640,7 +641,7 @@ static int ioctl_g_ctrl(struct v4l2_int_device *s, struct v4l2_control *vc)
 		dev_dbg(&adv7180_data.sen.i2c_client->dev,
 			"   V4L2_CID_SATURATION\n");
 
-	if (adv7180_suppress_i2c) 
+	if (adv7180_suppress_i2c)
 		sat = 127;
 	else
 		sat = adv7180_read(ADV7180_SD_SATURATION_CB);
@@ -1262,7 +1263,7 @@ static ssize_t analog_input_store(struct device *dev,
 			  struct device_attribute *attr,
 			  const char *buffer, size_t count)
 {
-	
+
 	if (sysfs_streq(buffer, "CVBS1"))
 		adv7180_hard_reset(true, 1);
 	else if (sysfs_streq(buffer, "CVBS2"))
@@ -1278,7 +1279,7 @@ static ssize_t analog_input_store(struct device *dev,
 }
 
 /* Attach the sysfs access methods */
-DEVICE_ATTR_RW(analog_input);		/* analog_input_store() / analog_input_show() */
+DEVICE_ATTR_RW(analog_input);	/* analog_input_store() analog_input_show() */
 
 /* Attribute Descriptor */
 static struct attribute *adv7180_sysfs_attrs[] = {
@@ -1314,7 +1315,7 @@ static int adv7180_probe(struct i2c_client *client,
 
 	printk(KERN_ERR"DBG sensor data is at %p\n", &adv7180_data);
 
-	if (adv7180_suppress_i2c) 
+	if (adv7180_suppress_i2c)
 		printk(KERN_ERR"suppressing i2c transactions in adv7180\n");
 
 	/* ov5640 pinctrl */
@@ -1516,5 +1517,5 @@ MODULE_LICENSE("GPL");
 MODULE_VERSION("0.2");
 
 #ifdef GIT_REVISION
-MODULE_INFO(gitrev,GIT_REVISION);
+MODULE_INFO(gitrev, GIT_REVISION);
 #endif

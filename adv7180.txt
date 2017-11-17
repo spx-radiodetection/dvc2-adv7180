@@ -1,0 +1,96 @@
+adv7180 driver for iMX6
+=======================
+
+Module Params (for use with evaluation board):
+- adv7180_suppress_i2c: set to 1 to suppress i2c transactions
+- adv7180_forced_mode: force the video mode - 1 NTSC, 65 PAL
+
+Sysfs Attributes:
+- analog_input: choose input CVBS1 (AIN1), CVBS2 (AIN4), CVBS3 (AIN5),
+                             YPbPr (on AIN1,4,5)
+
+
+device tree bindings
+--------------------
+
+Required properties:
+- compatible: "adv7180"
+- reg: the I2C address
+- ipu_id: ipu interface identifier
+- csi_id: Camera Serial Interface identifier
+
+Optional properties:
+- cvbs: if present specifies the cvbs input (1,2,3)
+- component: if present specifies YPbPr
+- mclk_source: if present specifies a iMX6 clock output for adv7180
+- mclk: if present specifies the clock rate
+- pwn-gpios: if present the gpio to toggle for powering down the device
+
+(if neither cvbs nor component properties is provided, CVBS1 is assumed)
+
+
+Example device tree for the device:
+
+&i2c1 {
+	clock-frequency = <100000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_i2c_pins>;
+	status = "okay";
+
+	adv7180: adv7180@21 {
+		compatible = "adv7180";
+		reg = <0x21>;
+		cvbs = <1>;
+		pwn-gpios = <&gpio3 31 GPIO_ACTIVE_LOW>;
+		ipu_id = <1>;
+		csi_id = <1>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_parcam>;
+	};
+}
+
+
+And remembering to set the v4l2 driver up for capturing video (see 
+imx6q-v4l2-capture documentation for a more complete explanation):
+
+/ {
+	v4l2_cap_0 {
+		compatible = "fsl,imx6q-v4l2-capture";
+		ipu_id = <1>;
+		csi_id = <1>;
+		mclk_source = <0>;
+		mipi_camera = <0>;
+		default_input = <0>;
+		status = "okay";
+	};
+}
+
+
+Example pin mapping (hsync / vsync signals not used in this example):
+
+&iomuxc {
+		{
+		pinctrl_parcam: parcam-grp {
+			fsl,pins = <
+				MX6QDL_PAD_EIM_DA10__IPU2_CSI1_DATA_EN 0xb000	/* active high input BT656_DE*/
+				MX6QDL_PAD_EIM_A17__IPU2_CSI1_DATA12   0xb000	/* active high input D0 */
+				MX6QDL_PAD_EIM_A18__IPU2_CSI1_DATA13   0xb000	/* active high input D1 */
+				MX6QDL_PAD_EIM_A19__IPU2_CSI1_DATA14   0xb000	/* active high input D2 */
+				MX6QDL_PAD_EIM_A20__IPU2_CSI1_DATA15   0xb000	/* active high input D3 */
+				MX6QDL_PAD_EIM_A21__IPU2_CSI1_DATA16   0xb000	/* active high input D4 */
+				MX6QDL_PAD_EIM_A22__IPU2_CSI1_DATA17   0xb000	/* active high input D5 */
+				MX6QDL_PAD_EIM_A23__IPU2_CSI1_DATA18   0xb000	/* active high input D6 */
+				MX6QDL_PAD_EIM_A24__IPU2_CSI1_DATA19   0xb000	/* active high input D7 */
+				MX6QDL_PAD_EIM_A16__IPU2_CSI1_PIXCLK   0xb000	/* active high input DISP_CLK */
+
+				/* Added for completeness - HSYNC / VSYNC are tokens in datastream (rather than signals here) */
+				MX6QDL_PAD_EIM_DA11__IPU2_CSI1_HSYNC   0xb000
+				MX6QDL_PAD_EIM_DA12__IPU2_CSI1_VSYNC   0xb000
+
+				/* ADV7180 Reset */
+				MX6QDL_PAD_EIM_D31__GPIO3_IO31 0x4001b0b1
+			>;
+		};
+	};
+};
+

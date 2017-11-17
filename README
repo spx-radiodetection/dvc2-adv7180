@@ -1,0 +1,26 @@
+adv7180 driver for iMX6
+=======================
+
+This is a modified form of the adv7180 driver found in the Freescale/NXP 3.14 
+kernel.  
+
+This is for the Radiodetection DVC2 board using the 32 pin variant of the 
+adv7180.
+
+Note that modern kernels have a very different adv7180 driver due to changes
+in V4L2, but this older version is favoured as it is proven working with iMX6
+video input interfaces.
+
+This version of the adv7180 has the follwoing changes:
+
+- mods to support NTSC (with the 3.14 kernel)
+- analog input selection via sysfs
+- selection of IPU
+
+In addition there are changes to aid usage of the module with the Analog
+Devices adv7180 evaluation board, by suppressing i2c transactions and
+by forcing PAL or NTSC mode.  This is because the evaluation board allows
+programming only via a USB interface, rather than i2c.
+
+See adv7108.txt for module parameters, sysfs interface and device tree 
+bindings.

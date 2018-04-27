@@ -89,6 +89,7 @@ static struct i2c_driver adv7180_i2c_driver = {
 struct sensor {
 	struct sensor_data sen;
 	v4l2_std_id std_id;
+	int lost_lock_status;
 } adv7180_data;
 
 
@@ -349,6 +350,7 @@ static void adv7180_get_std(v4l2_std_id *std)
 	bool locked;
 
 	status_1 = adv7180_read(ADV7180_STATUS_1);
+	adv7180_data.lost_lock_status |= (status_1 & 0x02);
 
 	if (adv7180_forced_mode)
 		status_1 = adv7180_forced_mode;
@@ -357,34 +359,43 @@ static void adv7180_get_std(v4l2_std_id *std)
 	standard = status_1 & 0x70;
 
 	mutex_lock(&mutex);
-	*std = V4L2_STD_ALL;
-	idx = ADV7180_NOT_LOCKED;
 	if (locked) {
 		if (standard == 0x40) {
-			*std = V4L2_STD_PAL;
-			idx = ADV7180_PAL;
+			adv7180_data.std_id = V4L2_STD_PAL;
+			video_idx = ADV7180_PAL;
 		} else if (standard == 0) {
-			*std = V4L2_STD_NTSC;
-			idx = ADV7180_NTSC;
+			adv7180_data.std_id = V4L2_STD_NTSC;
+			video_idx = ADV7180_NTSC;
 		}
 	}
-	mutex_unlock(&mutex);
 
 	dev_dbg(&adv7180_data.sen.i2c_client->dev,
 		"adv7180_get_std reporting %d\n", idx);
 
 	/* This assumes autodetect which this device uses. */
-	if (*std != adv7180_data.std_id) {
-		video_idx = idx;
-		adv7180_data.std_id = *std;
-		adv7180_data.sen.pix.width = video_fmts[video_idx].raw_width;
-		adv7180_data.sen.pix.height = video_fmts[video_idx].raw_height;
-	}
+	adv7180_data.sen.pix.width = video_fmts[video_idx].raw_width;
+	adv7180_data.sen.pix.height = video_fmts[video_idx].raw_height;
+	adv7180_data.sen.streamcap.timeperframe.denominator = video_fmts[video_idx].frame_rate;
+
+	*std = adv7180_data.std_id;
+
+	mutex_unlock(&mutex);
 }
 
 /***********************************************************************
  * IOCTL Functions from v4l2_int_ioctl_desc.
  ***********************************************************************/
+
+static int ioctl_g_lock_status(struct v4l2_int_device *s)
+{
+	int status;
+
+	status = adv7180_read(ADV7180_STATUS_1);
+	status |= adv7180_data.lost_lock_status;
+	adv7180_data.lost_lock_status = 0;
+
+	return status;
+}
 
 /*!
  * ioctl_g_ifparm - V4L2 sensor interface handler for vidioc_int_g_ifparm_num
@@ -412,10 +423,14 @@ static int ioctl_g_ifparm(struct v4l2_int_device *s, struct v4l2_ifparm *p)
 
 	/* Initialize structure to 0s then set any non-0 values. */
 	memset(p, 0, sizeof(*p));
-	p->if_type = V4L2_IF_TYPE_BT656; /* This is the only possibility. */
+	p->if_type = V4L2_IF_TYPE_BT656;
 	p->u.bt656.mode = V4L2_IF_TYPE_BT656_MODE_NOBT_8BIT;
 	p->u.bt656.nobt_hs_inv = 1;
-	p->u.bt656.bt_sync_correct = 1;
+	/* bt_sync_correct = 0 indicates that we are using the frame markers
+	 * within the BT656 stream.
+	 * bt_sync_correct = 1 indicates that we are using the VSYNC/HSYNC
+	 * hardware sync lines.  */
+	p->u.bt656.bt_sync_correct = 0;
 
 	/* ADV7180 has a dedicated clock so no clock settings needed. */
 
@@ -945,6 +960,8 @@ static struct v4l2_int_ioctl_desc adv7180_ioctl_desc[] = {
 				ioctl_enum_frameintervals},
 	{vidioc_int_g_chip_ident_num,
 				(v4l2_int_ioctl_func *)ioctl_g_chip_ident},
+        {vidioc_int_g_lock_status_num,
+				(v4l2_int_ioctl_func *)ioctl_g_lock_status},
 };
 
 static struct v4l2_int_slave adv7180_slave = {
@@ -1010,6 +1027,7 @@ static void adv7180_hard_reset(bool cvbs, u32 cvbs_input)
 	adv7180_write_reg(0x08, 0x80);
 	adv7180_write_reg(0x0A, 0x00);
 	adv7180_write_reg(0x0B, 0x00);
+	/* blue screen 0x36 = enabled, 0x34 = disabled */
 	adv7180_write_reg(0x0C, 0x36);
 	adv7180_write_reg(0x0D, 0x7C);
 	adv7180_write_reg(0x0E, 0x00);
